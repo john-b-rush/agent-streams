@@ -26,7 +26,7 @@ dependencies = []
 agent-streams = "agent_streams:main"
 
 [dependency-groups]
-dev = ["ruff", "ty"]
+dev = ["ruff", "ty", "pytest"]
 
 [tool.setuptools]
 py-modules = ["agent_streams"]
@@ -39,3 +39,7 @@ extend-include = ["bin/agent-streams"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "C4"]
 ignore = ["E501"]
+
+[tool.pytest.ini_options]
+addopts = "-m 'not integration'"
+markers = ["integration: integration tests that invoke real tools"]

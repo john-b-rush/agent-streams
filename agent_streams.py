@@ -11,6 +11,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import codecs
 from dataclasses import dataclass
@@ -532,46 +533,62 @@ def _emit_metrics(
     now = int(time.time())
     _ensure_dir(metrics_file.parent)
     states = ["init", "running", "review", "waiting", "approved", "maxed"]
-    with metrics_file.open("w", encoding="utf-8") as f:
-        f.write("# HELP streams_iteration_total Total iterations executed for a stream.\n")
-        f.write("# TYPE streams_iteration_total counter\n")
-        f.write(f"streams_iteration_total{{{labels}}} {iteration}\n")
-        f.write("# HELP streams_max_iterations Max iterations configured for the stream.\n")
-        f.write("# TYPE streams_max_iterations gauge\n")
-        f.write(f"streams_max_iterations{{{labels}}} {max_iterations}\n")
-        f.write("# HELP streams_state Current lifecycle state for the stream.\n")
-        f.write("# TYPE streams_state gauge\n")
-        for s in states:
-            v = 1 if state == s else 0
-            f.write(f"streams_state{{{labels},state=\"{s}\"}} {v}\n")
-        f.write("# HELP streams_last_update_timestamp Unix timestamp of the last metrics update.\n")
-        f.write("# TYPE streams_last_update_timestamp gauge\n")
-        f.write(f"streams_last_update_timestamp{{{labels}}} {now}\n")
-        f.write("# HELP streams_last_action_duration_seconds Duration of the last agent or review action.\n")
-        f.write("# TYPE streams_last_action_duration_seconds gauge\n")
-        f.write(f"streams_last_action_duration_seconds{{{labels},action=\"agent\"}} {last_agent_duration}\n")
-        f.write(f"streams_last_action_duration_seconds{{{labels},action=\"review\"}} {last_review_duration}\n")
-        f.write("# HELP streams_review_total Review results by outcome.\n")
-        f.write("# TYPE streams_review_total counter\n")
-        f.write(f"streams_review_total{{{labels},result=\"approved\"}} {review_approved}\n")
-        f.write(f"streams_review_total{{{labels},result=\"issues\"}} {review_issues}\n")
-        f.write(f"streams_review_total{{{labels},result=\"none\"}} {review_none}\n")
-        f.write("# HELP streams_llm_calls_total Total Claude calls for this stream.\n")
-        f.write("# TYPE streams_llm_calls_total counter\n")
-        f.write(f"streams_llm_calls_total{{{labels}}} {llm_calls}\n")
-        f.write("# HELP streams_llm_usage_missing_total Claude calls missing token usage.\n")
-        f.write("# TYPE streams_llm_usage_missing_total counter\n")
-        f.write(f"streams_llm_usage_missing_total{{{labels}}} {llm_usage_missing}\n")
-        f.write("# HELP streams_tokens_total Total tokens by type for this stream.\n")
-        f.write("# TYPE streams_tokens_total counter\n")
-        f.write(f"streams_tokens_total{{{labels},kind=\"prompt\"}} {tokens_prompt_total}\n")
-        f.write(f"streams_tokens_total{{{labels},kind=\"completion\"}} {tokens_completion_total}\n")
-        f.write(f"streams_tokens_total{{{labels},kind=\"total\"}} {tokens_total}\n")
-        f.write("# HELP streams_tokens_last Tokens for the last Claude call.\n")
-        f.write("# TYPE streams_tokens_last gauge\n")
-        f.write(f"streams_tokens_last{{{labels},kind=\"prompt\"}} {tokens_prompt_last}\n")
-        f.write(f"streams_tokens_last{{{labels},kind=\"completion\"}} {tokens_completion_last}\n")
-        f.write(f"streams_tokens_last{{{labels},kind=\"total\"}} {tokens_last_total}\n")
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            delete=False,
+            dir=str(metrics_file.parent),
+            prefix=f".{metrics_file.name}.",
+            suffix=".tmp",
+        ) as f:
+            tmp_path = Path(f.name)
+            f.write("# HELP streams_iteration_total Total iterations executed for a stream.\n")
+            f.write("# TYPE streams_iteration_total counter\n")
+            f.write(f"streams_iteration_total{{{labels}}} {iteration}\n")
+            f.write("# HELP streams_max_iterations Max iterations configured for the stream.\n")
+            f.write("# TYPE streams_max_iterations gauge\n")
+            f.write(f"streams_max_iterations{{{labels}}} {max_iterations}\n")
+            f.write("# HELP streams_state Current lifecycle state for the stream.\n")
+            f.write("# TYPE streams_state gauge\n")
+            for s in states:
+                v = 1 if state == s else 0
+                f.write(f"streams_state{{{labels},state=\"{s}\"}} {v}\n")
+            f.write("# HELP streams_last_update_timestamp Unix timestamp of the last metrics update.\n")
+            f.write("# TYPE streams_last_update_timestamp gauge\n")
+            f.write(f"streams_last_update_timestamp{{{labels}}} {now}\n")
+            f.write("# HELP streams_last_action_duration_seconds Duration of the last agent or review action.\n")
+            f.write("# TYPE streams_last_action_duration_seconds gauge\n")
+            f.write(f"streams_last_action_duration_seconds{{{labels},action=\"agent\"}} {last_agent_duration}\n")
+            f.write(f"streams_last_action_duration_seconds{{{labels},action=\"review\"}} {last_review_duration}\n")
+            f.write("# HELP streams_review_total Review results by outcome.\n")
+            f.write("# TYPE streams_review_total counter\n")
+            f.write(f"streams_review_total{{{labels},result=\"approved\"}} {review_approved}\n")
+            f.write(f"streams_review_total{{{labels},result=\"issues\"}} {review_issues}\n")
+            f.write(f"streams_review_total{{{labels},result=\"none\"}} {review_none}\n")
+            f.write("# HELP streams_llm_calls_total Total Claude calls for this stream.\n")
+            f.write("# TYPE streams_llm_calls_total counter\n")
+            f.write(f"streams_llm_calls_total{{{labels}}} {llm_calls}\n")
+            f.write("# HELP streams_llm_usage_missing_total Claude calls missing token usage.\n")
+            f.write("# TYPE streams_llm_usage_missing_total counter\n")
+            f.write(f"streams_llm_usage_missing_total{{{labels}}} {llm_usage_missing}\n")
+            f.write("# HELP streams_tokens_total Total tokens by type for this stream.\n")
+            f.write("# TYPE streams_tokens_total counter\n")
+            f.write(f"streams_tokens_total{{{labels},kind=\"prompt\"}} {tokens_prompt_total}\n")
+            f.write(f"streams_tokens_total{{{labels},kind=\"completion\"}} {tokens_completion_total}\n")
+            f.write(f"streams_tokens_total{{{labels},kind=\"total\"}} {tokens_total}\n")
+            f.write("# HELP streams_tokens_last Tokens for the last Claude call.\n")
+            f.write("# TYPE streams_tokens_last gauge\n")
+            f.write(f"streams_tokens_last{{{labels},kind=\"prompt\"}} {tokens_prompt_last}\n")
+            f.write(f"streams_tokens_last{{{labels},kind=\"completion\"}} {tokens_completion_last}\n")
+            f.write(f"streams_tokens_last{{{labels},kind=\"total\"}} {tokens_last_total}\n")
+        if tmp_path is not None:
+            tmp_path.replace(metrics_file)
+    finally:
+        if tmp_path and tmp_path.exists():
+            with contextlib.suppress(OSError):
+                tmp_path.unlink()
 
 
 def _run_loop(

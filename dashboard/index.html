@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Streams Dashboard</title>
+    <style>
+      :root {
+        --bg-top: #f7f1e6;
+        --bg-bottom: #e6eff5;
+        --ink: #1f1b16;
+        --muted: #6b6157;
+        --card: #ffffffcc;
+        --line: #e1d7ca;
+        --accent: #2c6e6f;
+        --warn: #9b4d1f;
+        --good: #2f6f43;
+        --bad: #b83a1b;
+        --chip: #efe6da;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--ink);
+        font-family: "Source Serif 4", "Georgia", "Times New Roman", serif;
+        background:
+          radial-gradient(1200px 480px at 15% -10%, #ffffff 0%, transparent 60%),
+          radial-gradient(900px 520px at 90% 0%, #fef6e9 0%, transparent 55%),
+          linear-gradient(180deg, var(--bg-top), var(--bg-bottom));
+      }
+
+      header {
+        padding: 32px 40px 12px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 30px;
+        letter-spacing: 0.3px;
+      }
+
+      .meta {
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      main {
+        padding: 8px 40px 40px;
+      }
+
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 12px;
+        margin-bottom: 18px;
+      }
+
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 14px 16px;
+        box-shadow: 0 10px 30px rgba(25, 22, 18, 0.08);
+      }
+
+      .card h2 {
+        margin: 0 0 4px;
+        font-size: 13px;
+        letter-spacing: 0.6px;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .card .value {
+        font-size: 22px;
+        font-weight: 600;
+      }
+
+      .table-wrap {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 12px 16px 4px;
+        overflow-x: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 720px;
+      }
+
+      th,
+      td {
+        padding: 10px 8px;
+        text-align: left;
+        border-bottom: 1px solid var(--line);
+        font-family: "IBM Plex Sans", "Gill Sans", "Trebuchet MS", sans-serif;
+        font-size: 13px;
+      }
+
+      th {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        color: var(--muted);
+      }
+
+      tr:last-child td {
+        border-bottom: none;
+      }
+
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: var(--chip);
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+      }
+
+      .chip[data-state="running"] {
+        background: #d7f0ef;
+        color: var(--accent);
+      }
+
+      .chip[data-state="review"] {
+        background: #f6e8d4;
+        color: var(--warn);
+      }
+
+      .chip[data-state="waiting"] {
+        background: #e6e6f9;
+        color: #4143a3;
+      }
+
+      .chip[data-state="approved"] {
+        background: #dff0e5;
+        color: var(--good);
+      }
+
+      .chip[data-state="maxed"] {
+        background: #f8d9d1;
+        color: var(--bad);
+      }
+
+      .chip[data-state="init"],
+      .chip[data-state="unknown"] {
+        background: #e6dfd5;
+        color: #6d6052;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .nowrap {
+        white-space: nowrap;
+      }
+
+      .empty {
+        padding: 16px 0 22px;
+        text-align: center;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Agent Streams Dashboard</h1>
+      <div class="meta" id="meta">Loading...</div>
+    </header>
+    <main>
+      <section class="cards">
+        <div class="card">
+          <h2>Total Runs</h2>
+          <div class="value" id="total">0</div>
+        </div>
+        <div class="card">
+          <h2>Active</h2>
+          <div class="value" id="active">0</div>
+        </div>
+        <div class="card">
+          <h2>Approved</h2>
+          <div class="value" id="approved">0</div>
+        </div>
+        <div class="card">
+          <h2>Maxed</h2>
+          <div class="value" id="maxed">0</div>
+        </div>
+      </section>
+      <section class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Age</th>
+              <th>Repo</th>
+              <th>Stream</th>
+              <th>Run</th>
+              <th>State</th>
+              <th>Iter</th>
+              <th>Tokens</th>
+              <th>LLM</th>
+              <th>Last Update</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div class="empty" id="empty" hidden>No runs found.</div>
+      </section>
+    </main>
+    <script>
+      const meta = document.getElementById("meta");
+      const rows = document.getElementById("rows");
+      const empty = document.getElementById("empty");
+      const total = document.getElementById("total");
+      const active = document.getElementById("active");
+      const approved = document.getElementById("approved");
+      const maxed = document.getElementById("maxed");
+
+      const activeStates = new Set(["running", "review", "waiting"]);
+
+      function formatAge(seconds) {
+        if (seconds === null || seconds === undefined) return "--";
+        const s = Math.max(0, seconds);
+        const m = Math.floor(s / 60);
+        const h = Math.floor(m / 60);
+        if (h > 0) return `${h}h ${m % 60}m`;
+        if (m > 0) return `${m}m ${s % 60}s`;
+        return `${s}s`;
+      }
+
+      function formatTime(ts) {
+        if (!ts) return "--";
+        return new Date(ts * 1000).toLocaleTimeString();
+      }
+
+      function countStates(states) {
+        const counts = { total: 0, active: 0, approved: 0, maxed: 0 };
+        for (const [state, value] of Object.entries(states || {})) {
+          counts.total += value;
+          if (activeStates.has(state)) counts.active += value;
+          if (state === "approved") counts.approved += value;
+          if (state === "maxed") counts.maxed += value;
+        }
+        return counts;
+      }
+
+      function render(data) {
+        const runs = (data.runs || []).slice().sort((a, b) => {
+          return (a.last_update || 0) - (b.last_update || 0);
+        });
+
+        const counts = countStates(data.summary ? data.summary.states : {});
+        total.textContent = counts.total;
+        active.textContent = counts.active;
+        approved.textContent = counts.approved;
+        maxed.textContent = counts.maxed;
+
+        const stamp = data.generated_at
+          ? new Date(data.generated_at * 1000).toLocaleString()
+          : "--";
+        meta.textContent = `Last refresh: ${stamp}`;
+
+        rows.innerHTML = "";
+        if (!runs.length) {
+          empty.hidden = false;
+          return;
+        }
+        empty.hidden = true;
+        for (const run of runs) {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td class="nowrap">${formatAge(run.age_sec)}</td>
+            <td>${run.repo || run.repo_slug}</td>
+            <td>${run.stream}</td>
+            <td class="muted">${run.run_id}</td>
+            <td><span class="chip" data-state="${run.state}">${run.state}</span></td>
+            <td>${run.iteration ?? "--"} / ${run.max_iterations ?? "--"}</td>
+            <td>${run.tokens_total ?? "--"}</td>
+            <td>${run.llm_calls ?? "--"}</td>
+            <td class="nowrap">${formatTime(run.last_update)}</td>
+          `;
+          rows.appendChild(tr);
+        }
+      }
+
+      async function refresh() {
+        try {
+          const res = await fetch("/metrics.json", { cache: "no-store" });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          render(data);
+        } catch (err) {
+          meta.textContent = `Dashboard offline: ${err.message}`;
+        }
+      }
+
+      refresh();
+      setInterval(refresh, 2000);
+    </script>
+  </body>
+</html>
