@@ -54,7 +54,6 @@ uv run python scripts/metrics_dashboard.py
 ```
 
 Then open `http://127.0.0.1:8765` in your browser. Use `--agent-home`, `--host`, or `--port` to customize, or `--dump` to print the JSON snapshot.
-
 ## License
 
 MIT. See `LICENSE`.

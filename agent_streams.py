@@ -855,6 +855,29 @@ def _run_loop(
             return True
 
         if (agent_dir / "DONE").exists():
+            if _git_is_dirty(repo_root):
+                status = _run(
+                    ["git", "-C", str(repo_root), "status", "--porcelain"],
+                    capture=True,
+                    check=False,
+                )
+                details = (status.stdout or "").strip()
+                message = [
+                    "Worktree has uncommitted or untracked changes.",
+                    f"Repo: {repo_root}",
+                    "Commit or clean the worktree, then recreate DONE.",
+                ]
+                if details:
+                    message.append("")
+                    message.append(details)
+                _write_text(agent_dir / "ISSUES.md", "\n".join(message).rstrip() + "\n")
+                _safe_unlink(agent_dir / "DONE")
+                print("Worktree dirty; wrote ISSUES.md and removed DONE. Continuing...")
+                state = "waiting"
+                emit()
+                time.sleep(2)
+                continue
+
             print(f"[{time.strftime('%H:%M:%S')}] Agent signaled DONE. Running overseer review...")
             state = "review"
             emit()
@@ -1203,6 +1226,9 @@ def cmd_run_stream(args: argparse.Namespace) -> int:
             print("No approval; skipping merge.")
             return 0
 
+        if _git_is_dirty(worktree_path):
+            _die(f"Worktree has uncommitted changes; clean it first: {worktree_path}")
+
         print(f"Approved; squashing into {base_branch}...")
         branch_name = _git_out(worktree_path, "rev-parse", "--abbrev-ref", "HEAD")
         if branch_name == "HEAD":
@@ -1249,10 +1275,6 @@ def cmd_run_stream(args: argparse.Namespace) -> int:
 
         _run(["git", "-C", str(repo_root), "commit", "-m", f"Squash stream: {stream} ({run_id})"])
 
-        # Cleanup worktree + branch.
-        _run(["git", "-C", str(repo_root), "worktree", "remove", "--force", str(worktree_path)], check=False)
-        _run(["git", "-C", str(repo_root), "worktree", "prune"], check=False)
-        _run(["git", "-C", str(repo_root), "branch", "-D", branch_name], check=False)
         return 0
     finally:
         if tmux_session:
@@ -1469,8 +1491,8 @@ def _merge_squash(*, meta: dict[str, Any]) -> None:
     if not approved_path.is_file():
         _die(f"Not approved yet (missing): {approved_path}")
 
-    if _git_is_dirty(repo_root):
-        _die(f"Repo has uncommitted changes; clean it first: {repo_root}")
+    if _git_is_dirty(worktree_path):
+        _die(f"Worktree has uncommitted changes; clean it first: {worktree_path}")
 
     print(f"Squashing {stream} ({run_id}) into {base_branch}...")
     branch_name = _git_out(worktree_path, "rev-parse", "--abbrev-ref", "HEAD")
@@ -1516,10 +1538,6 @@ def _merge_squash(*, meta: dict[str, Any]) -> None:
 
     _run(["git", "-C", str(repo_root), "commit", "-m", f"Squash stream: {stream} ({run_id})"])
 
-    # Cleanup worktree + branch.
-    _run(["git", "-C", str(repo_root), "worktree", "remove", "--force", str(worktree_path)], check=False)
-    _run(["git", "-C", str(repo_root), "worktree", "prune"], check=False)
-    _run(["git", "-C", str(repo_root), "branch", "-D", branch_name], check=False)
 
 
 def _locate_run_dir(*, agent_home: Path, run_id: str, repo: str | None) -> Path:
