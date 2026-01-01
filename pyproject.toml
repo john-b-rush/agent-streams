@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-streams"
+version = "0.1.0"
+description = "Local tmux-based stream runner for build→review→fix→merge loops"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "agent-streams contributors" }]
+classifiers = [
+  "Environment :: Console",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Operating System :: MacOS :: MacOS X",
+  "Operating System :: POSIX :: Linux",
+]
+dependencies = []
+
+[project.scripts]
+agent-streams = "agent_streams:main"
+
+[dependency-groups]
+dev = ["ruff", "ty"]
+
+[tool.setuptools]
+py-modules = ["agent_streams"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-include = ["bin/agent-streams"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "C4"]
+ignore = ["E501"]
