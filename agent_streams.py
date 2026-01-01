@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import codecs
+import contextlib
 import hashlib
 import json
 import os
@@ -13,11 +15,9 @@ import subprocess
 import sys
 import tempfile
 import time
-import codecs
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
-
+from typing import Any, NoReturn
 
 DEFAULT_AGENT_HOME = Path("~/.agent-streams").expanduser()
 DEFAULT_SESSION_PREFIX = "agent-streams"
@@ -27,7 +27,7 @@ def _eprint(msg: str) -> None:
     print(msg, file=sys.stderr)
 
 
-def _die(msg: str, code: int = 1) -> "NoReturn":
+def _die(msg: str, code: int = 1) -> NoReturn:
     _eprint(msg)
     raise SystemExit(code)
 
@@ -39,7 +39,7 @@ def _shell_quote(value: str) -> str:
 def _run(
     argv: list[str],
     *,
-    cwd: Optional[Path] = None,
+    cwd: Path | None = None,
     check: bool = True,
     capture: bool = False,
 ) -> subprocess.CompletedProcess[str]:
@@ -70,7 +70,7 @@ def _git_out(repo_root: Path, *args: str) -> str:
     return (proc.stdout or "").strip()
 
 
-def _resolve_repo_root(repo: Optional[str]) -> Path:
+def _resolve_repo_root(repo: str | None) -> Path:
     base = Path(repo).expanduser() if repo else Path.cwd()
     proc = _run(["git", "-C", str(base), "rev-parse", "--show-toplevel"], capture=True)
     root = (proc.stdout or "").strip()
@@ -113,7 +113,7 @@ def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def _resolve_agent_home(agent_home: Optional[str]) -> Path:
+def _resolve_agent_home(agent_home: str | None) -> Path:
     if agent_home:
         return Path(agent_home).expanduser()
     env = os.environ.get("AGENT_STREAMS_HOME")
@@ -124,7 +124,7 @@ def _resolve_agent_home(agent_home: Optional[str]) -> Path:
 
 def _resolve_prompt_source(
     *,
-    prompt: Optional[str],
+    prompt: str | None,
     agent_home: Path,
     repo_slug: str,
     stream_name: str,
@@ -459,7 +459,7 @@ def _extract_text(obj: Any) -> str:
     return ""
 
 
-def _first_int(*values: Any) -> Optional[int]:
+def _first_int(*values: Any) -> int | None:
     for value in values:
         if value is None:
             continue
@@ -470,7 +470,7 @@ def _first_int(*values: Any) -> Optional[int]:
     return None
 
 
-def _find_usage(obj: Any) -> Optional[dict[str, Any]]:
+def _find_usage(obj: Any) -> dict[str, Any] | None:
     if isinstance(obj, dict):
         usage = obj.get("usage")
         if isinstance(usage, dict):
@@ -487,7 +487,7 @@ def _find_usage(obj: Any) -> Optional[dict[str, Any]]:
     return None
 
 
-def _extract_usage(obj: Any) -> Optional[dict[str, int]]:
+def _extract_usage(obj: Any) -> dict[str, int] | None:
     usage = _find_usage(obj)
     if not usage:
         return None
@@ -505,7 +505,7 @@ def _extract_usage(obj: Any) -> Optional[dict[str, int]]:
     }
 
 
-def _load_json_maybe(raw: str) -> Optional[Any]:
+def _load_json_maybe(raw: str) -> Any | None:
     raw = raw.strip()
     if not raw:
         return None
@@ -535,7 +535,7 @@ def _load_json_maybe(raw: str) -> Optional[Any]:
 class ClaudeResult:
     raw: str
     text: str
-    usage: Optional[dict[str, int]]
+    usage: dict[str, int] | None
 
 
 def _run_claude_json(*, prompt_file: Path, cwd: Path) -> ClaudeResult:
@@ -678,7 +678,7 @@ If genuinely complete (rare):
 """
 
 
-def _resolve_review_prompt(*, agent_home: Path, repo_slug: str, override: Optional[str]) -> str:
+def _resolve_review_prompt(*, agent_home: Path, repo_slug: str, override: str | None) -> str:
     if override:
         path = Path(override).expanduser()
         if not path.is_file():
@@ -1145,10 +1145,8 @@ def cmd_run_stream(args: argparse.Namespace) -> int:
         if stream_dir_in_worktree.is_dir():
             agent_link = stream_dir_in_worktree / ".agent"
             if not agent_link.exists():
-                try:
+                with contextlib.suppress(OSError):
                     os.symlink(str(agent_dir), str(agent_link))
-                except OSError:
-                    pass
 
         meta = {
             "run_id": run_id,
@@ -1274,8 +1272,8 @@ def _agent_status(agent_dir: Path) -> str:
             lines = todo.read_text(encoding="utf-8").splitlines()
         except OSError:
             return "TODO"
-        tasks = sum(1 for l in lines if l.startswith("- ["))
-        done = sum(1 for l in lines if l.startswith("- [x]"))
+        tasks = sum(1 for line in lines if line.startswith("- ["))
+        done = sum(1 for line in lines if line.startswith("- [x]"))
         return f"TODO {done}/{tasks}"
     return "not started"
 
@@ -1420,7 +1418,7 @@ def _discover_run_dirs(agent_home: Path) -> list[Path]:
     return sorted(run_dirs, key=sort_key, reverse=True)
 
 
-def _tmux_session_alive(session: str) -> Optional[bool]:
+def _tmux_session_alive(session: str) -> bool | None:
     if not session:
         return None
     if not _tmux_available():
@@ -1429,7 +1427,7 @@ def _tmux_session_alive(session: str) -> Optional[bool]:
     return proc.returncode == 0
 
 
-def _resolve_filter_repo_root(repo: Optional[str]) -> Optional[Path]:
+def _resolve_filter_repo_root(repo: str | None) -> Path | None:
     if not repo:
         return None
     try:
@@ -1524,7 +1522,7 @@ def _merge_squash(*, meta: dict[str, Any]) -> None:
     _run(["git", "-C", str(repo_root), "branch", "-D", branch_name], check=False)
 
 
-def _locate_run_dir(*, agent_home: Path, run_id: str, repo: Optional[str]) -> Path:
+def _locate_run_dir(*, agent_home: Path, run_id: str, repo: str | None) -> Path:
     if repo:
         repo_root = _resolve_repo_root(repo)
         slug = _repo_slug(repo_root)
@@ -1656,10 +1654,19 @@ def cmd_status(args: argparse.Namespace) -> int:
             }
         )
 
+    limit = args.limit
+    if limit is not None:
+        if limit < 0:
+            _die("--limit must be >= 0")
+        if limit > 0:
+            runs = runs[:limit]
+
     if args.format == "json":
+        runs = list(reversed(runs))
         print(json.dumps(runs, indent=2))
         return 0
 
+    runs = list(reversed(runs))
     print("=== Agent Streams Runs ===\n")
     for item in runs:
         print(f"--- {item['stream']} ({item['run_id']}) ---")
@@ -1676,7 +1683,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         if item["agent_dir"]:
             print(f"  Agent dir: {item['agent_dir']}")
 
-        print(f"  Agent: {item['agent_status']}")
+        print(f"  Agent markers: {item['agent_status']}")
         print(f"  Merge: {item['merged_commit'] or 'not merged'}")
 
         if item["state"]:
@@ -1701,6 +1708,8 @@ def cmd_status(args: argparse.Namespace) -> int:
 
         if item["next_command"]:
             print(f"  Next: {item['next_command']}")
+            if item["next_action"] == "attach" and item["tmux_session"]:
+                print(f"  Capture: tmux capture-pane -p -t {item['tmux_session']} -S -200")
         print("")
 
     return 0
@@ -1764,10 +1773,8 @@ def cmd_resume(args: argparse.Namespace) -> int:
     max_iterations = args.max_iterations
     meta_max = meta.get("max_iterations")
     if meta_max is not None:
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             max_iterations = int(meta_max)
-        except (TypeError, ValueError):
-            pass
 
     run_stream_cmd = [
         *_self_run_argv(),
@@ -1975,7 +1982,7 @@ def cmd_deps(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="agent-streams")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -2016,6 +2023,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_status.add_argument("--repo", help="Filter by repo root path")
     p_status.add_argument("--stream", help="Filter by stream")
     p_status.add_argument("--format", choices=("text", "json"), default="text")
+    p_status.add_argument("--limit", type=int, default=10, help="Limit runs shown (0 for all)")
     p_status.set_defaults(func=cmd_status)
 
     p_slug = sub.add_parser("repo-slug", help="Print repo slug (used in ~/.agent-streams paths)")
