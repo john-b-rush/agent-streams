@@ -299,6 +299,117 @@ def _claude_bin() -> str:
     return os.environ.get("AGENT_STREAMS_CLAUDE_BIN", "claude")
 
 
+class Colors:
+    GRAY = "\033[90m"
+    CYAN = "\033[96m"
+    YELLOW = "\033[93m"
+    GREEN = "\033[92m"
+    RED = "\033[91m"
+    BOLD = "\033[1m"
+    RESET = "\033[0m"
+
+
+def _use_color() -> bool:
+    if os.environ.get("NO_COLOR") is not None:
+        return False
+    return sys.stderr.isatty()
+
+
+def _truncate_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "..."
+
+
+def _stringify_stream_value(value: Any, *, limit: int) -> str:
+    if isinstance(value, str):
+        return _truncate_text(value, limit)
+    if isinstance(value, (list, dict)):
+        text = _content_to_text(value)
+        if text:
+            return _truncate_text(text, limit)
+        try:
+            rendered = json.dumps(value, ensure_ascii=True)
+        except TypeError:
+            rendered = str(value)
+        return _truncate_text(rendered, limit)
+    return _truncate_text(str(value), limit)
+
+
+def _format_stream_event(data: dict[str, Any]) -> str | None:
+    event_type = data.get("type")
+    subtype = data.get("subtype")
+    use_color = _use_color()
+
+    def wrap(text: str, color: str) -> str:
+        if use_color:
+            return f"{color}{text}{Colors.RESET}"
+        return text
+
+    if event_type == "system" and subtype == "init":
+        model = data.get("model", "unknown")
+        return wrap(f"[init] model={model}", Colors.GRAY)
+
+    if event_type == "assistant":
+        msg = data.get("message") or {}
+        content = msg.get("content") or []
+        parts: list[str] = []
+        if isinstance(content, list):
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                item_type = item.get("type")
+                if item_type == "tool_use":
+                    tool_name = item.get("name", "?")
+                    tool_input = item.get("input", {})
+                    try:
+                        input_str = json.dumps(tool_input, ensure_ascii=True)
+                    except TypeError:
+                        input_str = str(tool_input)
+                    input_str = _truncate_text(input_str, 160)
+                    parts.append(wrap(f"[tool] {tool_name}: {input_str}", Colors.CYAN))
+                elif item_type == "text":
+                    text = _stringify_stream_value(item.get("text", ""), limit=200)
+                    if text:
+                        parts.append(wrap(f"[text] {text}", Colors.GREEN))
+        return "\n".join(parts) if parts else None
+
+    if event_type == "user":
+        msg = data.get("message") or {}
+        content = msg.get("content") or []
+        if isinstance(content, list):
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") == "tool_result":
+                    result = _stringify_stream_value(item.get("content", ""), limit=150)
+                    is_error = bool(item.get("is_error", False))
+                    status = "error" if is_error else "result"
+                    color = Colors.RED if is_error else Colors.YELLOW
+                    return wrap(f"[{status}] {result}", color)
+        return None
+
+    if event_type == "result":
+        cost_raw = data.get("total_cost_usd", 0)
+        turns_raw = data.get("num_turns", 0)
+        duration_raw = data.get("duration_ms", 0)
+        try:
+            cost = float(cost_raw)
+        except (TypeError, ValueError):
+            cost = 0.0
+        try:
+            turns = int(turns_raw)
+        except (TypeError, ValueError):
+            turns = 0
+        try:
+            duration = float(duration_raw) / 1000
+        except (TypeError, ValueError):
+            duration = 0.0
+        return wrap(f"[done] {turns} turns, ${cost:.4f}, {duration:.1f}s", Colors.BOLD)
+
+    return None
+
+
 def _content_to_text(content: Any) -> str:
     if isinstance(content, str):
         return content
@@ -458,6 +569,79 @@ def _run_claude_json_stdin(*, prompt_text: str, cwd: Path) -> ClaudeResult:
     return ClaudeResult(raw=raw, text=text, usage=usage)
 
 
+def _run_claude_stream(*, prompt_file: Path, cwd: Path, quiet: bool = False) -> ClaudeResult:
+    return _run_claude_stream_stdin(
+        prompt_text=_read_text(prompt_file), cwd=cwd, quiet=quiet
+    )
+
+
+def _run_claude_stream_stdin(*, prompt_text: str, cwd: Path, quiet: bool = False) -> ClaudeResult:
+    claude = _claude_bin()
+    cmd = [
+        claude,
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--dangerously-skip-permissions",
+    ]
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(cwd),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+    except FileNotFoundError:
+        _die(f"Command not found: {claude}")
+
+    stdin = proc.stdin
+    if stdin is None:
+        _die("Failed to open stdin for Claude process.")
+    assert stdin is not None
+    stdin.write(prompt_text)
+    stdin.close()
+
+    raw_lines: list[str] = []
+    final_result: dict[str, Any] | None = None
+
+    if proc.stdout is not None:
+        for raw_line in proc.stdout:
+            raw_lines.append(raw_line)
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                if not quiet:
+                    print(line, file=sys.stderr, flush=True)
+                continue
+            if data.get("type") == "result":
+                final_result = data
+            if not quiet:
+                formatted = _format_stream_event(data)
+                if formatted:
+                    print(formatted, file=sys.stderr, flush=True)
+
+    proc.wait()
+    raw = "".join(raw_lines)
+
+    if final_result:
+        text = final_result.get("result", "")
+        usage = _extract_usage(final_result)
+    else:
+        data = _load_json_maybe(raw)
+        text = _extract_text(data) if data is not None else ""
+        usage = _extract_usage(data) if data is not None else None
+        if not text:
+            text = raw
+    return ClaudeResult(raw=raw, text=text, usage=usage)
+
+
 def _default_review_prompt() -> str:
     return """# Overseer Review
 
@@ -602,7 +786,8 @@ def _run_loop(
     prompt_file: Path,
     metrics_dir: Path,
     max_iterations: int,
-    review_prompt_override: Optional[str],
+    review_prompt_override: str | None,
+    quiet: bool = False,
 ) -> bool:
     metrics_file = metrics_dir / f"{stream_name}.prom"
     labels = f"repo=\"{repo_label}\",stream=\"{stream_name}\""
@@ -696,7 +881,9 @@ def _run_loop(
                 "\nWrite issues to `ISSUES.md` in the agent state directory, or approval to `APPROVED`.\n"
             )
 
-            result = _run_claude_json_stdin(prompt_text=review_prompt, cwd=repo_root)
+            result = _run_claude_stream_stdin(
+                prompt_text=review_prompt, cwd=repo_root, quiet=quiet
+            )
             print(result.text, end="" if result.text.endswith("\n") else "\n")
 
             llm_calls += 1
@@ -748,7 +935,9 @@ def _run_loop(
         emit()
 
         agent_start = time.time()
-        result = _run_claude_json_stdin(prompt_text=_read_text(prompt_file), cwd=repo_root)
+        result = _run_claude_stream_stdin(
+            prompt_text=_read_text(prompt_file), cwd=repo_root, quiet=quiet
+        )
         print(result.text, end="" if result.text.endswith("\n") else "\n")
         last_agent_duration = int(time.time() - agent_start)
 
@@ -879,6 +1068,10 @@ def cmd_launch(args: argparse.Namespace) -> int:
     ]
     if args.review_prompt:
         run_stream_cmd += ["--review-prompt", args.review_prompt]
+    if args.quiet:
+        run_stream_cmd += ["--quiet"]
+    if args.quiet:
+        run_stream_cmd += ["--quiet"]
 
     if args.no_tmux:
         proc = _run(run_stream_cmd, check=False)
@@ -1005,6 +1198,7 @@ def cmd_run_stream(args: argparse.Namespace) -> int:
             metrics_dir=metrics_dir,
             max_iterations=int(args.max_iterations),
             review_prompt_override=args.review_prompt,
+            quiet=args.quiet,
         )
 
         if not approved:
@@ -1037,7 +1231,9 @@ def cmd_run_stream(args: argparse.Namespace) -> int:
                         "",
                     ]
                 )
-                _run_claude_json_stdin(prompt_text=prompt_text, cwd=repo_root)
+                _run_claude_stream_stdin(
+                    prompt_text=prompt_text, cwd=repo_root, quiet=args.quiet
+                )
 
             remaining = _git_out(repo_root, "diff", "--name-only", "--diff-filter=U")
             if remaining.strip():
@@ -1304,7 +1500,7 @@ def _merge_squash(*, meta: dict[str, Any]) -> None:
                     "",
                 ]
             )
-            _run_claude_json_stdin(prompt_text=prompt_text, cwd=repo_root)
+            _run_claude_stream_stdin(prompt_text=prompt_text, cwd=repo_root, quiet=False)
 
         remaining = _git_out(repo_root, "diff", "--name-only", "--diff-filter=U")
         if remaining.strip():
@@ -1793,6 +1989,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_launch.add_argument("--metrics-dir", help="Set metrics root directory (run id appended)")
     p_launch.add_argument("--review-prompt", help="Override review prompt markdown")
     p_launch.add_argument("--max-iterations", type=int, default=10)
+    p_launch.add_argument("--quiet", action="store_true", help="Suppress streaming status output")
     p_launch.set_defaults(func=cmd_launch)
 
     p_run = sub.add_parser("run-stream", help=argparse.SUPPRESS)
@@ -1811,6 +2008,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_run.add_argument("--tmux-session")
     p_run.add_argument("--review-prompt")
     p_run.add_argument("--max-iterations", default="10")
+    p_run.add_argument("--quiet", action="store_true", help="Suppress streaming status output")
     p_run.set_defaults(func=cmd_run_stream)
 
     p_status = sub.add_parser("status", help="Show runs under ~/.agent-streams")
@@ -1846,6 +2044,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_resume.add_argument("--no-tmux", action="store_true", help="Run in current terminal (no tmux)")
     p_resume.add_argument("--review-prompt", help="Override review prompt markdown")
     p_resume.add_argument("--max-iterations", type=int, default=10)
+    p_resume.add_argument("--quiet", action="store_true", help="Suppress streaming status output")
     p_resume.set_defaults(func=cmd_resume)
 
     ns = parser.parse_args(argv)
