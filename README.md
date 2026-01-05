@@ -41,6 +41,20 @@ agent-streams merge <run_id> --repo /path/to/repo
 
 Prompts live outside your repo by default under `~/.agent-streams/repos/<repo_slug>/streams/streamN/prompt.md`.
 
+## Testing
+
+```bash
+uv run pytest -v
+uv run ruff check .
+uv run ty check
+```
+
+Integration tests (real tools; skipped by default):
+
+```bash
+uv run pytest -v -m integration
+```
+
 ## Branches
 
 Runs work from any checked-out branch. The current branch becomes the base branch for the run; detached HEAD is not supported.
@@ -54,6 +68,7 @@ uv run python scripts/metrics_dashboard.py
 ```
 
 Then open `http://127.0.0.1:8765` in your browser. Use `--agent-home`, `--host`, or `--port` to customize, or `--dump` to print the JSON snapshot.
+
 ## License
 
 MIT. See `LICENSE`.
