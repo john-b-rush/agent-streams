@@ -1,5 +1,7 @@
 # agent-streams
 
+> **Archived:** Improvements in coding models and agent harnesses have made this project unnecessary. It is no longer maintained and is preserved for reference.
+
 agent-streams is a local runner for long-running coding agents with a skeptical overseer gate.
 DONE is a claim, not a state: a separate overseer reviews against the spec and only then allows a merge.
 
